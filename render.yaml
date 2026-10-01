@@ -1,0 +1,14 @@
+# Render blueprint: a free web service that redeploys on every push to main.
+# The free plan sleeps after 15 idle minutes, so the first request after a pause takes about a minute.
+services:
+  - type: web
+    name: secop-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev # no runtime dependencies; this only validates the lockfile
+    startCommand: node src/server.ts
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 24
