@@ -76,3 +76,7 @@ the tests run it against a fake portal with a fixed date.
 scripts/refresh-entities.ts
 test/api.test.ts
 ```
+
+## License
+
+[MIT](LICENSE) for the code. `data/entities.json` is derived from Colombia's open data on datos.gov.co and stays under that portal's terms.
