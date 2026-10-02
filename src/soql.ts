@@ -1,5 +1,6 @@
 // Every query this API can send to datos.gov.co. Callers pass numbers that were already
-// validated; nothing a client types is ever concatenated into SoQL.
+// validated, plus at most one modality that came out of the dataset itself; nothing a client
+// types is ever concatenated into SoQL.
 
 export const DATASET = "https://www.datos.gov.co/resource/jbjy-vk9h.json"; // SECOP II - Contratos Electrónicos
 export const FIRST_YEAR = 2015;
@@ -84,10 +85,13 @@ export const queries = {
     $order: "mes ASC",
     $limit: "12",
   }),
-  contracts: (nit: number, year: number, page: number): Soql => ({
+  /** `modality`: undefined for every contract, null for the ones with none recorded, or a value from byModality. */
+  contracts: (nit: number, year: number, page: number, modality?: string | null): Soql => ({
     $select: "id_contrato, referencia_del_contrato, objeto_del_contrato, proveedor_adjudicado, valor_del_contrato, " +
       "fecha_de_firma, estado_contrato, modalidad_de_contratacion, tipo_de_contrato, urlproceso",
-    $where: signedIn(nit, year),
+    $where: signedIn(nit, year) + (modality === undefined ? ""
+      : modality === null ? " AND modalidad_de_contratacion IS NULL"
+      : ` AND modalidad_de_contratacion = '${modality.replaceAll("'", "''")}'`),
     $order: "valor_del_contrato DESC, id_contrato ASC",
     $limit: String(PAGE_SIZE + 1), // one extra row tells us whether there is a next page
     $offset: String((page - 1) * PAGE_SIZE),

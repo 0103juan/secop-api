@@ -12,6 +12,7 @@ GET /entities?q=medellin                    search the entity directory (in memo
 GET /entities/890905211                     the entity and its contracts per year
 GET /entities/890905211/overview?year=2024  totals, top suppliers, modalities, months
 GET /entities/890905211/contracts?year=2024&page=1
+GET /entities/890905211/contracts?year=2024&modality=Contrataci%C3%B3n%20directa    only one modality
 GET /health
 ```
 
@@ -21,7 +22,7 @@ The open data portal has its own query API, and a browser could call it directly
 
 - **Searching entities upstream takes about 90 seconds.** A name search is a `LIKE` over six million rows. The directory of 5,800 entities is built once by `npm run refresh-entities` (one grouped query, about 90 seconds), committed as `data/entities.json`, and searched in memory, ignoring case and accents, in about 3 ms.
 - **Personal data stays behind.** The dataset has 95 columns, including bank accounts, addresses and ID numbers. Each query selects a fixed list of columns. Suppliers are grouped by document number, because their names are typed inconsistently, but the number itself (often a person's cédula) is never selected into a response. A test asserts it.
-- **Clients cannot write queries.** A NIT must be 5 to 12 digits, a year an integer in range, a page an integer up to 500. Only those numbers are placed in SoQL; nothing a client types is concatenated into a query.
+- **Clients cannot write queries.** A NIT must be 5 to 12 digits, a year an integer in range, a page an integer up to 500. Only those numbers are placed in SoQL; nothing a client types is concatenated into a query. The one text filter, `modality`, works by lookup: the client's text has to equal one of the modalities the dataset itself returned for that entity and year, and the query is built from the dataset's value, with quotes escaped. Anything else is a 400 that never reaches the portal.
 - **The portal is slow and rate-limited.** Responses are cached in memory for an hour, concurrent identical requests share one upstream call, failures are never cached, and each client gets 60 requests a minute.
 
 ## What the data taught me
@@ -36,7 +37,7 @@ The open data portal has its own query API, and a browser could call it directly
 ```bash
 npm install          # two dev dependencies: typescript and @types/node
 npm start            # http://localhost:3000
-npm test             # 10 tests, no network
+npm test             # 11 tests, no network
 LIVE=1 npm test      # adds one test that sends every query to the real datos.gov.co
 npm run typecheck
 ```

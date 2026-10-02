@@ -121,6 +121,21 @@ test("contracts are paginated and only link back to SECOP", async (t) => {
   assert.equal(body.items[1].signedOn, "2024-03-05");
 });
 
+test("a modality filter only accepts values the dataset returned, and the query is built from that value", async (t) => {
+  const { get, sent } = await start(t);
+  const { status, body } = await get(`/entities/${NIT}/contracts?year=2024&modality=${encodeURIComponent("Contratación directa")}`);
+  assert.equal(status, 200);
+  assert.equal(body.modality, "Contratación directa");
+  assert.match(sent.at(-1)!.get("$where")!, / AND modalidad_de_contratacion = 'Contratación directa'$/);
+  const before = sent.length;
+  for (const bad of ["Licitación", "Contratación directa' OR '1'='1", ""]) {
+    assert.equal((await get(`/entities/${NIT}/contracts?year=2024&modality=${encodeURIComponent(bad)}`)).status, 400, bad);
+  }
+  assert.equal(sent.length, before); // rejected against the cached list: nothing new went upstream
+  assert.match(queries.contracts(NIT, 2024, 1, "Men's wear").$where, / = 'Men''s wear'$/); // a quote in the data cannot close the literal
+  assert.match(queries.contracts(NIT, 2024, 1, null).$where, / AND modalidad_de_contratacion IS NULL$/);
+});
+
 test("repeated requests are served from the cache", async (t) => {
   const { get, sent } = await start(t);
   await Promise.all([get(`/entities/${NIT}/overview?year=2024`), get(`/entities/${NIT}/overview?year=2024`)]);

@@ -10,6 +10,7 @@ const UPSTREAM_TIMEOUT_MS = 60_000;
 const RATE_LIMIT = 60; // requests per client per minute
 const RATE_WINDOW_MS = 60_000;
 const SECOP_URL = /^https:\/\/([a-z0-9-]+\.)*secop\.gov\.co\//i;
+const NO_MODALITY = "Sin modalidad"; // how a contract with no modality recorded is shown and asked for
 
 type Row = Record<string, unknown>;
 
@@ -82,7 +83,8 @@ export function createApp(options: Options) {
       about: "Colombian public contracts (SECOP II, datos.gov.co) per state entity",
       code: "https://github.com/0103juan/secop-api",
       try: ["/entities?q=medellin", "/entities/890905211", "/entities/890905211/overview?year=2024",
-            "/entities/890905211/contracts?year=2024&page=1", "/health"],
+            "/entities/890905211/contracts?year=2024&page=1",
+            "/entities/890905211/contracts?year=2024&modality=Licitaci%C3%B3n%20p%C3%BAblica", "/health"],
     })],
 
     [/^\/health$/, () => ({ status: "ok", entities: directory.size })],
@@ -116,7 +118,7 @@ export function createApp(options: Options) {
         topSuppliers: suppliers.map((row) => ({
           name: String(row.proveedor ?? "").trim(), contracts: Number(row.contratos), total: Number(row.total ?? 0) })),
         byModality: modalities.map((row) => ({
-          modality: String(row.modalidad ?? "Sin modalidad"), contracts: Number(row.contratos), total: Number(row.total ?? 0) })),
+          modality: String(row.modalidad ?? NO_MODALITY), contracts: Number(row.contratos), total: Number(row.total ?? 0) })),
         byMonth: Array.from({ length: 12 }, (_, i) => ({
           month: i + 1, contracts: Number(byMonth.get(i + 1)?.contratos ?? 0), total: Number(byMonth.get(i + 1)?.total ?? 0) })),
       };
@@ -126,9 +128,19 @@ export function createApp(options: Options) {
       const { nit } = entity(parseNit(rawNit));
       const year = parseYear(params.get("year"), new Date(now()));
       const page = parsePage(params.get("page"));
-      const rows = await upstream(queries.contracts(nit, year, page));
+      // The client's text only picks one of the modalities the dataset returned for this entity
+      // and year (the same cached query the overview uses); the query is built from that value.
+      const wanted = params.get("modality");
+      let modality: string | null | undefined;
+      if (wanted !== null) {
+        modality = (await upstream(queries.byModality(nit, year)))
+          .map((row) => (row.modalidad ?? null) as string | null)
+          .find((known) => (known ?? NO_MODALITY) === wanted);
+        if (modality === undefined) throw new BadRequest("modality must be one of byModality in this entity's overview for that year");
+      }
+      const rows = await upstream(queries.contracts(nit, year, page, modality));
       return {
-        nit, year, page, pageSize: PAGE_SIZE, hasMore: rows.length > PAGE_SIZE,
+        nit, year, page, modality: wanted, pageSize: PAGE_SIZE, hasMore: rows.length > PAGE_SIZE,
         items: rows.slice(0, PAGE_SIZE).map((row) => {
           const url = (row.urlproceso as { url?: string } | undefined)?.url ?? "";
           return {
