@@ -9,8 +9,8 @@ Live at <https://secop-api-i89q.onrender.com> (free plan: the first request afte
 ```
 GET /                                       what is here, with links to try
 GET /entities?q=medellin                    search the entity directory (in memory)
-GET /entities/890905211                     the entity and its contracts per year
-GET /entities/890905211/overview?year=2024  totals, top suppliers, modalities, months
+GET /entities/890905211                     the entity and, per year, its contracts, value and largest contract
+GET /entities/890905211/overview?year=2024  totals, top suppliers, modalities with their award method, months
 GET /entities/890905211/contracts?year=2024&page=1
 GET /entities/890905211/contracts?year=2024&modality=Contrataci%C3%B3n%20directa    only one modality
 GET /health
@@ -28,7 +28,8 @@ The open data portal has its own query API, and a browser could call it directly
 ## What the data taught me
 
 - **One entity, many spellings.** The directory query returns 6,586 name records for 5,800 NITs, and a city's departments often publish under the city's NIT. The commonest spelling becomes the display name; every other one stays searchable.
-- **Values are typed by hand.** One 2019 contract of the city of Medellín is recorded at about 7.7 × 10²⁰ pesos. The overview therefore returns `largest` next to `total`, so a client can tell when one contract explains the whole year. Both front ends turn that into a visible warning.
+- **Values are typed by hand.** One 2019 contract of the city of Medellín is recorded at about 7.7 × 10²⁰ pesos. The overview and each year therefore return `largest` next to `total`, so a client can tell when one contract explains a whole year, and refuse to compare that year with another. Both front ends turn that into a visible warning.
+- **Thirty modality names, four ways of awarding.** The register writes "Contratación directa", "Contratación Directa (con ofertas)", "Selección Abreviada de Menor Cuantía" and many more. What a reader wants to know is simpler: was the contractor chosen directly, by competition, or under a regime of the entity's own? Each modality comes with that `method`, decided in one tested function, so every client draws the same conclusion from the same data.
 - **Drafts and cancelled contracts are not spending**, so every query excludes them.
 - **Some signing dates are mistyped** (years far in the past or future); the year list keeps 2015 to the current year.
 
@@ -37,7 +38,7 @@ The open data portal has its own query API, and a browser could call it directly
 ```bash
 npm install          # two dev dependencies: typescript and @types/node
 npm start            # http://localhost:3000
-npm test             # 11 tests, no network
+npm test             # 12 tests, no network
 LIVE=1 npm test      # adds one test that sends every query to the real datos.gov.co
 npm run typecheck
 ```
@@ -63,10 +64,15 @@ Every push to `main` runs the type check and the tests in GitHub Actions (`.gith
 ## Layout
 
 ```
-src/soql.ts        every query the API can send, and the parameter validation
+src/soql.ts        what is asked: every query the API can send, and the parameter validation
+src/upstream.ts    how it is fetched: the call to datos.gov.co, the cache, the failures it can have
+src/views.ts       what a client receives: pure functions from the portal's rows to this API's JSON
 src/entities.ts    the entity directory: merge spellings, search in memory
-src/app.ts         routing, cache, rate limit, error mapping
+src/app.ts         the HTTP surface: routing, rate limit, error mapping
 src/server.ts      entry point
+
+Each file has one reason to change. `app.ts` receives its `fetch`, its clock and its directory, which is how
+the tests run it against a fake portal with a fixed date.
 scripts/refresh-entities.ts
 test/api.test.ts
 ```

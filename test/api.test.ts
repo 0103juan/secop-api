@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { createApp, type Options } from "../src/app.ts";
 import { Directory, mergeDirectory } from "../src/entities.ts";
 import { BadRequest, DATASET, parseNit, parsePage, parseYear, queries } from "../src/soql.ts";
+import { awardMethod } from "../src/views.ts";
 
 const NIT = 890905211;
 const directory = new Directory(mergeDirectory([
@@ -24,8 +25,8 @@ async function start(t: { after: (fn: () => void) => void }, overrides: Partial<
     sent.push(url.searchParams);
     const select = url.searchParams.get("$select")!;
     const rows = select.startsWith("date_extract_y") ? [
-        { anio: "1900", contratos: "1", total: "5" }, { anio: "2023", contratos: "10", total: "1000.5" },
-        { anio: "2024", contratos: "12", total: "3000" }]
+        { anio: "1900", contratos: "1", total: "5" }, { anio: "2023", contratos: "10", total: "1000.5", mayor: "400" },
+        { anio: "2024", contratos: "12", total: "3000", mayor: "2500" }]
       : select.includes("count(distinct") ? [{ contratos: "12", total: "3000", mayor: "2500", proveedores: "7" }]
       : select.includes("max(proveedor_adjudicado)") ? [{ proveedor: " ACME SAS ", contratos: "3", total: "2600" }]
       : select.includes("as modalidad") ? [{ modalidad: "Contratación directa", contratos: "12", total: "3000" }]
@@ -94,7 +95,8 @@ test("an entity comes with its years, without mistyped dates", async (t) => {
   const { status, body } = await get(`/entities/${NIT}`);
   assert.equal(status, 200);
   assert.equal(body.name, "DISTRITO DE MEDELLÍN");
-  assert.deepEqual(body.years, [{ year: 2023, contracts: 10, total: 1000.5 }, { year: 2024, contracts: 12, total: 3000 }]);
+  assert.deepEqual(body.years, [{ year: 2023, contracts: 10, total: 1000.5, largest: 400 },
+                                { year: 2024, contracts: 12, total: 3000, largest: 2500 }]);
 });
 
 test("the overview has typed numbers, twelve months and the largest contract", async (t) => {
@@ -104,6 +106,7 @@ test("the overview has typed numbers, twelve months and the largest contract", a
   assert.deepEqual({ contracts: body.contracts, total: body.total, largest: body.largest, suppliers: body.suppliers },
                    { contracts: 12, total: 3000, largest: 2500, suppliers: 7 });
   assert.deepEqual(body.topSuppliers, [{ name: "ACME SAS", contracts: 3, total: 2600 }]);
+  assert.deepEqual(body.byModality, [{ modality: "Contratación directa", method: "direct", contracts: 12, total: 3000 }]);
   assert.equal(body.byMonth.length, 12);
   assert.deepEqual(body.byMonth[2], { month: 3, contracts: 12, total: 3000 });
   assert.deepEqual(body.byMonth[0], { month: 1, contracts: 0, total: 0 });
@@ -134,6 +137,21 @@ test("a modality filter only accepts values the dataset returned, and the query 
   assert.equal(sent.length, before); // rejected against the cached list: nothing new went upstream
   assert.match(queries.contracts(NIT, 2024, 1, "Men's wear").$where, / = 'Men''s wear'$/); // a quote in the data cannot close the literal
   assert.match(queries.contracts(NIT, 2024, 1, null).$where, / AND modalidad_de_contratacion IS NULL$/);
+});
+
+test("a modality is classified by how it awards the contract, however the dataset spells it", () => {
+  const methods = {
+    direct: ["Contratación directa", "Contratación Directa (con ofertas)", "CONTRATACION DIRECTA"],
+    competitive: ["Licitación pública", "Licitación pública Obra Publica", "Selección Abreviada de Menor Cuantía",
+                  "Seleccion Abreviada Menor Cuantia Sin Manifestacion Interes", "Selección abreviada subasta inversa",
+                  "Concurso de méritos abierto", "Mínima cuantía"],
+    special: ["Contratación régimen especial", "Contratación régimen especial (con ofertas)"],
+    // Selling the state's goods is not buying, and an unknown modality is not guessed.
+    other: ["Enajenación de bienes con subasta", "Asociación Público Privada", "Sin modalidad", "No Definido"],
+  };
+  for (const [method, modalities] of Object.entries(methods)) {
+    for (const modality of modalities) assert.equal(awardMethod(modality), method, modality);
+  }
 });
 
 test("repeated requests are served from the cache", async (t) => {

@@ -51,7 +51,8 @@ export const queries = {
     $limit: "50000",
   }),
   years: (nit: number): Soql => ({
-    $select: "date_extract_y(fecha_de_firma) as anio, count(*) as contratos, sum(valor_del_contrato) as total",
+    $select: "date_extract_y(fecha_de_firma) as anio, count(*) as contratos, sum(valor_del_contrato) as total, " +
+      "max(valor_del_contrato) as mayor",
     $where: `nit_entidad = ${nit} AND fecha_de_firma IS NOT NULL AND ${LIVE}`,
     $group: "anio",
     $order: "anio ASC",

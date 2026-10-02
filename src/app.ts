@@ -1,18 +1,14 @@
-// The HTTP surface: routing, validation, caching, rate limiting and error mapping.
+// The HTTP surface: routing, rate limiting and error mapping. What is asked upstream lives in
+// soql.ts, how it is fetched and cached in upstream.ts, and what a client receives in views.ts.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Directory } from "./entities.ts";
-import { BadRequest, DATASET, FIRST_YEAR, PAGE_SIZE, parseNit, parsePage, parseYear, queries, type Soql } from "./soql.ts";
+import { BadRequest, parseNit, parsePage, parseYear, queries } from "./soql.ts";
+import { createUpstream, UpstreamError } from "./upstream.ts";
+import { NO_MODALITY, toContractPage, toOverview, toYears } from "./views.ts";
 
-const CACHE_TTL_MS = 60 * 60 * 1000; // contracts are published daily; an hour-old total is fine
-const CACHE_MAX = 500;
-const UPSTREAM_TIMEOUT_MS = 60_000;
 const RATE_LIMIT = 60; // requests per client per minute
 const RATE_WINDOW_MS = 60_000;
-const SECOP_URL = /^https:\/\/([a-z0-9-]+\.)*secop\.gov\.co\//i;
-const NO_MODALITY = "Sin modalidad"; // how a contract with no modality recorded is shown and asked for
-
-type Row = Record<string, unknown>;
 
 export type Options = {
   directory: Directory;
@@ -30,37 +26,11 @@ class HttpError extends Error {
   }
 }
 
-export function createApp(options: Options) {
-  const { directory, allowedOrigin = "*", appToken } = options;
-  const fetchUpstream = options.fetch ?? fetch;
-  const now = options.now ?? Date.now;
-  const cache = new Map<string, { expires: number; rows: Promise<Row[]> }>();
+/** A fixed window per client: simple, and enough to keep one visitor from spending the portal's quota. */
+function createRateLimiter(now: () => number) {
   let hits = new Map<string, number>();
   let windowStart = now();
-
-  /** Run a query upstream, once: concurrent and repeated requests share the same promise. */
-  function upstream(soql: Soql): Promise<Row[]> {
-    const key = JSON.stringify(soql);
-    const cached = cache.get(key);
-    if (cached && cached.expires > now()) return cached.rows;
-    const rows = (async () => {
-      const response = await fetchUpstream(`${DATASET}?${new URLSearchParams(soql)}`, {
-        headers: { "User-Agent": "secop-api", ...(appToken ? { "X-App-Token": appToken } : {}) },
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      }).catch((error: Error) => {
-        throw new HttpError(504, `datos.gov.co did not answer (${error.name})`);
-      });
-      if (!response.ok) throw new HttpError(502, `datos.gov.co answered HTTP ${response.status}`);
-      return (await response.json()) as Row[];
-    })();
-    cache.delete(key);
-    cache.set(key, { expires: now() + CACHE_TTL_MS, rows });
-    if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!); // oldest entry
-    rows.catch(() => cache.delete(key)); // never cache a failure
-    return rows;
-  }
-
-  function allow(client: string): boolean {
+  return (client: string): boolean => {
     if (now() - windowStart >= RATE_WINDOW_MS) {
       hits = new Map();
       windowStart = now();
@@ -68,7 +38,14 @@ export function createApp(options: Options) {
     const count = (hits.get(client) ?? 0) + 1;
     hits.set(client, count);
     return count <= RATE_LIMIT;
-  }
+  };
+}
+
+export function createApp(options: Options) {
+  const { directory, allowedOrigin = "*" } = options;
+  const now = options.now ?? Date.now;
+  const upstream = createUpstream({ fetch: options.fetch ?? fetch, now, appToken: options.appToken });
+  const allow = createRateLimiter(now);
 
   function entity(nit: number) {
     const found = directory.get(nit);
@@ -93,11 +70,7 @@ export function createApp(options: Options) {
 
     [/^\/entities\/([^/]+)$/, async ([, rawNit]) => {
       const found = entity(parseNit(rawNit));
-      const thisYear = new Date(now()).getFullYear();
-      const years = (await upstream(queries.years(found.nit)))
-        .map((row) => ({ year: Number(row.anio), contracts: Number(row.contratos), total: Number(row.total ?? 0) }))
-        .filter(({ year }) => year >= FIRST_YEAR && year <= thisYear); // drops mistyped signing dates
-      return { ...found, years };
+      return { ...found, years: toYears(await upstream(queries.years(found.nit)), new Date(now()).getFullYear()) };
     }],
 
     [/^\/entities\/([^/]+)\/overview$/, async ([, rawNit], params) => {
@@ -106,22 +79,7 @@ export function createApp(options: Options) {
       const [totals, suppliers, modalities, months] = await Promise.all([
         upstream(queries.totals(nit, year)), upstream(queries.topSuppliers(nit, year)),
         upstream(queries.byModality(nit, year)), upstream(queries.byMonth(nit, year))]);
-      const byMonth = new Map(months.map((row) => [Number(row.mes), row]));
-      return {
-        nit, year,
-        contracts: Number(totals[0]?.contratos ?? 0),
-        total: Number(totals[0]?.total ?? 0),
-        // The values are typed by hand and some are off by orders of magnitude, so a client
-        // needs the largest single contract to judge how much of the total to believe.
-        largest: Number(totals[0]?.mayor ?? 0),
-        suppliers: Number(totals[0]?.proveedores ?? 0),
-        topSuppliers: suppliers.map((row) => ({
-          name: String(row.proveedor ?? "").trim(), contracts: Number(row.contratos), total: Number(row.total ?? 0) })),
-        byModality: modalities.map((row) => ({
-          modality: String(row.modalidad ?? NO_MODALITY), contracts: Number(row.contratos), total: Number(row.total ?? 0) })),
-        byMonth: Array.from({ length: 12 }, (_, i) => ({
-          month: i + 1, contracts: Number(byMonth.get(i + 1)?.contratos ?? 0), total: Number(byMonth.get(i + 1)?.total ?? 0) })),
-      };
+      return toOverview(nit, year, { totals, suppliers, modalities, months });
     }],
 
     [/^\/entities\/([^/]+)\/contracts$/, async ([, rawNit], params) => {
@@ -138,25 +96,7 @@ export function createApp(options: Options) {
           .find((known) => (known ?? NO_MODALITY) === wanted);
         if (modality === undefined) throw new BadRequest("modality must be one of byModality in this entity's overview for that year");
       }
-      const rows = await upstream(queries.contracts(nit, year, page, modality));
-      return {
-        nit, year, page, modality: wanted, pageSize: PAGE_SIZE, hasMore: rows.length > PAGE_SIZE,
-        items: rows.slice(0, PAGE_SIZE).map((row) => {
-          const url = (row.urlproceso as { url?: string } | undefined)?.url ?? "";
-          return {
-            id: String(row.id_contrato ?? ""),
-            reference: String(row.referencia_del_contrato ?? ""),
-            object: String(row.objeto_del_contrato ?? ""),
-            supplier: String(row.proveedor_adjudicado ?? ""),
-            value: Number(row.valor_del_contrato ?? 0),
-            signedOn: String(row.fecha_de_firma ?? "").slice(0, 10),
-            status: String(row.estado_contrato ?? ""),
-            modality: String(row.modalidad_de_contratacion ?? ""),
-            type: String(row.tipo_de_contrato ?? ""),
-            url: SECOP_URL.test(url) ? url : null, // only ever link back to SECOP itself
-          };
-        }),
-      };
+      return { nit, year, page, modality: wanted, ...toContractPage(await upstream(queries.contracts(nit, year, page, modality))) };
     }],
   ];
 
@@ -184,7 +124,7 @@ export function createApp(options: Options) {
       throw new HttpError(404, "No such route");
     } catch (error) {
       if (error instanceof BadRequest) return send(400, { error: error.message });
-      if (error instanceof HttpError) return send(error.status, { error: error.message });
+      if (error instanceof HttpError || error instanceof UpstreamError) return send(error.status, { error: error.message });
       console.error(error);
       send(500, { error: "Internal error" }); // details stay in the log
     }

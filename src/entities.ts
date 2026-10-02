@@ -8,7 +8,8 @@ type StoredEntity = Entity & { aliases: string[] };
 
 type DirectoryRow = { nit_entidad?: string; nombre_entidad?: string; departamento?: string; orden?: string; contratos?: string };
 
-const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+/** Lower case, no accents: how names and modalities are compared. */
+export const fold = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**
  * One entity per NIT. The dataset spells an entity several ways, and a city's departments often
