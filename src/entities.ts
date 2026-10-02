@@ -40,12 +40,13 @@ export function mergeDirectory(rows: DirectoryRow[]): StoredEntity[] {
 
 export class Directory {
   readonly #entities: Entity[];
-  readonly #searchable: string[];
+  readonly #spellings: { original: string; folded: string }[][]; // per entity, its name first
   readonly #byNit: Map<number, Entity>;
 
   constructor(stored: StoredEntity[]) {
     this.#entities = stored.map(({ aliases, ...entity }) => entity); // already sorted by number of contracts
-    this.#searchable = stored.map((entity) => fold([entity.name, ...entity.aliases].join(" | ")));
+    this.#spellings = stored.map((entity) =>
+      [entity.name, ...entity.aliases].map((original) => ({ original, folded: fold(original) })));
     this.#byNit = new Map(this.#entities.map((entity) => [entity.nit, entity]));
   }
 
@@ -61,14 +62,21 @@ export class Directory {
     return this.#byNit.get(nit);
   }
 
-  /** Entities with every word of the query in one of their spellings, ignoring case and accents; biggest first. */
+  /**
+   * Entities with every word of the query in one of their spellings, ignoring case and accents.
+   * Matches on the entity's own name come first, biggest first. A match on another spelling comes
+   * after and is shown under that spelling, so the result explains why it matched.
+   */
   search(query: string, limit = 10): Entity[] {
     const words = fold(query).split(/\s+/).filter(Boolean);
     if (words.join("").length < 3) return [];
-    const found: Entity[] = [];
-    for (let i = 0; i < this.#entities.length && found.length < limit; i++) {
-      if (words.every((word) => this.#searchable[i].includes(word))) found.push(this.#entities[i]);
+    const byName: Entity[] = [];
+    const bySpelling: Entity[] = [];
+    for (let i = 0; i < this.#entities.length && byName.length < limit; i++) {
+      const match = this.#spellings[i].findIndex(({ folded }) => words.every((word) => folded.includes(word)));
+      if (match === 0) byName.push(this.#entities[i]);
+      else if (match > 0) bySpelling.push({ ...this.#entities[i], name: this.#spellings[i][match].original });
     }
-    return found;
+    return [...byName, ...bySpelling].slice(0, limit);
   }
 }

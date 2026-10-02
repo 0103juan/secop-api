@@ -4,7 +4,10 @@ A small HTTP API over Colombia's public procurement data: the six million **SECO
 
 It is the backend of [secop-dashboard](../secop-dashboard) (Angular) and [secop-mobile](../secop-mobile) (Flutter). Node.js 24 and TypeScript, with **no runtime dependencies**: `node:http`, the built-in `fetch`, the built-in test runner, and Node's native TypeScript support, so there is no build step.
 
+Live at <https://secop-api-i89q.onrender.com> (free plan: the first request after a pause takes about a minute).
+
 ```
+GET /                                       what is here, with links to try
 GET /entities?q=medellin                    search the entity directory (in memory)
 GET /entities/890905211                     the entity and its contracts per year
 GET /entities/890905211/overview?year=2024  totals, top suppliers, modalities, months

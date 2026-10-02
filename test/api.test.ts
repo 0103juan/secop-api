@@ -54,7 +54,15 @@ test("the directory merges spellings of one entity and searches without case or 
     nit: NIT, name: "DISTRITO DE MEDELLÍN", department: "Antioquia", level: "Territorial", contracts: 100 });
   assert.deepEqual(directory.search("medellin").map((e) => e.nit), [800194096, NIT]); // biggest first
   assert.deepEqual(directory.search("  Distrito   MEDELLÍN ").map((e) => e.nit), [NIT]);
-  assert.deepEqual(directory.search("municipio medellin"), [directory.get(NIT)]); // found by its other spelling
+  // Found by its other spelling, and shown under that spelling so the match makes sense.
+  assert.deepEqual(directory.search("municipio medellin"), [{ ...directory.get(NIT), name: "MUNICIPIO DE MEDELLIN" }]);
+  // A match on the entity's own name outranks a bigger entity that only matches by another spelling.
+  const ranked = new Directory(mergeDirectory([
+    { nit_entidad: "899999034", nombre_entidad: "SENA REGIONAL VALLE", contratos: "9000" },
+    { nit_entidad: "899999034", nombre_entidad: "SENA CENTRO DE SERVICIOS DE MEDELLIN", contratos: "100" },
+    { nit_entidad: String(NIT), nombre_entidad: "DISTRITO DE MEDELLIN", contratos: "50" },
+  ]));
+  assert.deepEqual(ranked.search("medellin").map((e) => e.name), ["DISTRITO DE MEDELLIN", "SENA CENTRO DE SERVICIOS DE MEDELLIN"]);
   assert.deepEqual(directory.search("bogota").map((e) => e.name), ["BOGOTÁ DISTRITO CAPITAL"]);
   assert.deepEqual(directory.search("me"), []); // too short to be a search
 });
@@ -127,6 +135,7 @@ test("bad input, unknown entities and unknown routes get clear errors and send n
   assert.equal((await get(`/entities/${NIT}/contracts?year=2024&page=0`)).status, 400);
   assert.equal((await get("/entities/123456789")).status, 404);
   assert.equal((await get("/nope")).status, 404);
+  assert.ok((await get("/")).body.try.includes("/health")); // the bare address lists the routes
   assert.deepEqual((await get("/entities?q=medellin")).body.items.map((e: any) => e.nit), [800194096, NIT]);
   assert.equal(sent.length, 0);
 });

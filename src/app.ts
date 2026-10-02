@@ -76,6 +76,15 @@ export function createApp(options: Options) {
   }
 
   const routes: [RegExp, (match: RegExpMatchArray, params: URLSearchParams) => Promise<unknown> | unknown][] = [
+    // Someone will open the bare address in a browser; tell them what is here.
+    [/^\/$/, () => ({
+      name: "secop-api",
+      about: "Colombian public contracts (SECOP II, datos.gov.co) per state entity",
+      code: "https://github.com/0103juan/secop-api",
+      try: ["/entities?q=medellin", "/entities/890905211", "/entities/890905211/overview?year=2024",
+            "/entities/890905211/contracts?year=2024&page=1", "/health"],
+    })],
+
     [/^\/health$/, () => ({ status: "ok", entities: directory.size })],
 
     [/^\/entities$/, (_, params) => ({ items: directory.search(params.get("q") ?? "") })],
